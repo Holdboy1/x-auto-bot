@@ -50,7 +50,8 @@ export function initDb() {
       source_name TEXT,
       source_title TEXT,
       source_url  TEXT,
-      angle_hint  TEXT
+      angle_hint  TEXT,
+      image_url   TEXT
     );
 
     CREATE TABLE IF NOT EXISTS top_performers (
@@ -72,6 +73,7 @@ export function initDb() {
       source_title  TEXT,
       source_url    TEXT,
       angle_hint    TEXT,
+      image_url     TEXT,
       tweet_id      TEXT,
       published_at  TEXT,
       failed_at     TEXT,
@@ -91,6 +93,21 @@ export function initDb() {
   addColumnIfMissing('source_title', 'TEXT');
   addColumnIfMissing('source_url', 'TEXT');
   addColumnIfMissing('angle_hint', 'TEXT');
+  addColumnIfMissing('image_url', 'TEXT');
+
+  const pendingColumns = db.prepare(`PRAGMA table_info(pending_posts)`).all() as Array<{ name: string }>;
+  const existingPending = new Set(pendingColumns.map((column) => column.name));
+  const addPendingColumnIfMissing = (name: string, sqlType: string) => {
+    if (!existingPending.has(name)) {
+      db.exec(`ALTER TABLE pending_posts ADD COLUMN ${name} ${sqlType}`);
+    }
+  };
+
+  addPendingColumnIfMissing('source_name', 'TEXT');
+  addPendingColumnIfMissing('source_title', 'TEXT');
+  addPendingColumnIfMissing('source_url', 'TEXT');
+  addPendingColumnIfMissing('angle_hint', 'TEXT');
+  addPendingColumnIfMissing('image_url', 'TEXT');
 
   console.log(`DB initialised at ${DB_PATH}`);
 }

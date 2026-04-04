@@ -10,6 +10,7 @@ export type GeneratedPost = {
   sourceTitle?: string;
   sourceUrl?: string;
   angleHint?: string;
+  imageUrl?: string;
 };
 
 const GROQ_API = 'https://api.groq.com/openai/v1/chat/completions';
@@ -78,6 +79,7 @@ function sanitizePosts(posts: GeneratedPost[], count: number, items: TrendItem[]
         sourceTitle: post.sourceTitle || matchedItem?.topic,
         sourceUrl: post.sourceUrl || matchedItem?.url,
         angleHint: post.angleHint || matchedItem?.angleHint,
+        imageUrl: post.imageUrl || matchedItem?.imageUrl,
       };
     })
     .filter((post) => {
@@ -133,7 +135,7 @@ REGRAS ABSOLUTAS:
 - Responda APENAS com JSON valido, sem markdown, sem explicacao
 
 Formato:
-[{"text":"conteudo do post","topic":"nome do topico","category":"ai|crypto|web3|tech|general","sourceName":"fonte","sourceTitle":"titulo-fonte","sourceUrl":"url","angleHint":"angulo usado"}]`;
+[{"text":"conteudo do post","topic":"nome do topico","category":"ai|crypto|web3|tech|general","sourceName":"fonte","sourceTitle":"titulo-fonte","sourceUrl":"url","angleHint":"angulo usado","imageUrl":"url da imagem se existir"}]`;
 
   const userPrompt = `Humor agora: ${mood}
 Formato de debate para usar em pelo menos 3 posts: ${debateFormat}

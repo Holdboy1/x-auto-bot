@@ -82,8 +82,8 @@ export function enqueuePosts(posts: GeneratedPost[], startHour: number, endHour:
   const insert = db.prepare(`
     INSERT INTO pending_posts (
       content, topic, scheduled_for, status, created_for_day,
-      source_name, source_title, source_url, angle_hint
-    ) VALUES (?, ?, ?, 'queued', ?, ?, ?, ?, ?)
+      source_name, source_title, source_url, angle_hint, image_url
+    ) VALUES (?, ?, ?, 'queued', ?, ?, ?, ?, ?, ?)
   `);
 
   const transaction = db.transaction(() => {
@@ -98,6 +98,7 @@ export function enqueuePosts(posts: GeneratedPost[], startHour: number, endHour:
         post.sourceTitle || null,
         post.sourceUrl || null,
         post.angleHint || null,
+        post.imageUrl || null,
       );
     });
   });
@@ -122,7 +123,7 @@ export async function dispatchNextPost(): Promise<void> {
       .prepare(`
         SELECT id, content as text, topic, source_name as sourceName,
                source_title as sourceTitle, source_url as sourceUrl,
-               angle_hint as angleHint, scheduled_for
+               angle_hint as angleHint, image_url as imageUrl, scheduled_for
         FROM pending_posts
         WHERE status = 'queued'
           AND scheduled_for <= datetime('now')

@@ -1,4 +1,5 @@
 import Parser from 'rss-parser';
+import { fetchOpenGraphImageUrl } from './media.js';
 import { getXClient } from './x-client.js';
 
 export type TrendItem = {
@@ -6,6 +7,7 @@ export type TrendItem = {
   source: string;
   score: number;
   url?: string;
+  imageUrl?: string;
   summary: string;
   category: 'ai' | 'crypto' | 'web3' | 'tech' | 'general';
   signal: 'trend' | 'market' | 'news' | 'community';
@@ -192,6 +194,43 @@ function normalizeTopic(input: string): string {
     .replace(/\s+-\s+Reddit$/i, '')
     .replace(/\s+-\s+TechCrunch$/i, '')
     .trim();
+}
+
+function extractFeedImageUrl(item: Record<string, unknown>, baseUrl?: string): string | undefined {
+  const maybeStrings = [
+    (item.enclosure as { url?: string } | undefined)?.url,
+    (item.image as { url?: string } | undefined)?.url,
+    (item.thumbnail as string | undefined),
+    (item['media:thumbnail'] as { $?: { url?: string } } | undefined)?.$?.url,
+    (item['media:content'] as { $?: { url?: string } } | undefined)?.$?.url,
+  ];
+
+  for (const candidate of maybeStrings) {
+    if (!candidate) {
+      continue;
+    }
+
+    try {
+      return new URL(candidate, baseUrl).toString();
+    } catch {
+      continue;
+    }
+  }
+
+  const content = [item.content, item['content:encoded']]
+    .filter((value): value is string => typeof value === 'string')
+    .join(' ');
+  const imageMatch = content.match(/<img[^>]+src=["']([^"']+)["']/i);
+
+  if (!imageMatch?.[1]) {
+    return undefined;
+  }
+
+  try {
+    return new URL(imageMatch[1], baseUrl).toString();
+  } catch {
+    return undefined;
+  }
 }
 
 function isRelevantTopic(topic: string): boolean {
@@ -390,6 +429,7 @@ async function fetchXSignals(): Promise<TrendItem[]> {
           source: 'X',
           score: Math.max(6, Math.min(12, Math.round(score / 10) + 6)),
           url: author?.username ? `https://x.com/${author.username}/status/${post.id}` : undefined,
+          imageUrl: undefined,
           summary: `Post em alta no X${author?.username ? ` por @${author.username}` : ''} com sinais recentes de engajamento.`,
           category: config.category,
           signal: 'community',
@@ -418,6 +458,7 @@ async function fetchGoogleTrendTopics(): Promise<TrendItem[]> {
               source: 'Google Trends',
               score: 7,
               url: item.link,
+              imageUrl: extractFeedImageUrl(item as Record<string, unknown>, item.link),
               summary: 'Sinal de busca subindo agora no Google Trends.',
               category: classifyCategory(item.title),
               signal: 'trend',
@@ -448,6 +489,7 @@ async function fetchRedditTopics(): Promise<TrendItem[]> {
               source: 'Reddit',
               score: 5,
               url: item.link,
+              imageUrl: extractFeedImageUrl(item as Record<string, unknown>, item.link),
               summary: item.contentSnippet || 'Discussao de comunidade ganhando tracao no Reddit.',
               category: classifyCategory(item.title),
               signal: 'community',
@@ -473,11 +515,14 @@ async function fetchNewsTopics(): Promise<TrendItem[]> {
         const feed = await parseFeed(url);
         for (const item of feed.items.slice(0, 6)) {
           if (item.title) {
+            const baseImageUrl = extractFeedImageUrl(item as Record<string, unknown>, item.link);
+            const imageUrl = baseImageUrl || (item.link ? await fetchOpenGraphImageUrl(item.link) : undefined);
             candidates.push({
               topic: item.title,
               source,
               score,
               url: item.link,
+              imageUrl,
               summary: item.contentSnippet || `Noticia recente em ${source}.`,
               category: classifyCategory(item.title),
               signal: 'news',
@@ -512,6 +557,7 @@ async function fetchHackerNewsTopics(): Promise<TrendItem[]> {
         source: 'Hacker News',
         score: 4,
         url: undefined,
+        imageUrl: undefined,
         summary: 'Assunto em destaque na front page do Hacker News.',
         category: classifyCategory(hit.title as string),
         signal: 'community',
@@ -542,6 +588,7 @@ async function fetchCoinGeckoTopics(): Promise<TrendItem[]> {
         source: 'CoinGecko',
         score: 9,
         url: `https://www.coingecko.com/en/coins/${item.name.toLowerCase().replace(/\s+/g, '-')}`,
+        imageUrl: undefined,
         summary: `${item.name} apareceu entre os ativos em alta observacao na CoinGecko.`,
         category: classifyCategory(item.name),
         signal: 'market',
@@ -554,6 +601,7 @@ async function fetchCoinGeckoTopics(): Promise<TrendItem[]> {
           source: 'CoinGecko',
           score: 6,
           url: `https://www.coingecko.com/en/coins/${item.name.toLowerCase().replace(/\s+/g, '-')}`,
+          imageUrl: undefined,
           summary: `${item.name} ganhou destaque de ranking e pode puxar narrativa de mercado.`,
           category: classifyCategory(item.name),
           signal: 'market',
@@ -584,6 +632,7 @@ async function fetchCoinGeckoTopics(): Promise<TrendItem[]> {
         source: 'CoinGecko',
         score: 7,
         url: `https://www.coingecko.com/en/coins/${coin.id ?? coin.name.toLowerCase().replace(/\s+/g, '-')}`,
+        imageUrl: undefined,
         summary: `${coin.name} mexeu ${change}% nas ultimas 24h e entrou no radar de movers.`,
         category: classifyCategory(coin.name),
         signal: 'market',
