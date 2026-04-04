@@ -1,11 +1,37 @@
 import Database from 'better-sqlite3';
+import fs from 'node:fs';
+import os from 'node:os';
 import path from 'node:path';
 
-const DB_PATH = process.env.RAILWAY_VOLUME_MOUNT_PATH
+const preferredDbPath = process.env.RAILWAY_VOLUME_MOUNT_PATH
   ? path.join(process.env.RAILWAY_VOLUME_MOUNT_PATH, 'bot.db')
   : path.join(process.cwd(), 'bot.db');
 
-export const db = new Database(DB_PATH);
+function openDatabase() {
+  const candidates = [
+    preferredDbPath,
+    path.join(os.tmpdir(), 'x-auto-bot', 'bot.db'),
+  ];
+
+  let lastError: unknown;
+
+  for (const candidate of candidates) {
+    try {
+      fs.mkdirSync(path.dirname(candidate), { recursive: true });
+      const database = new Database(candidate);
+      return { database, path: candidate };
+    } catch (error) {
+      lastError = error;
+      console.error(`Failed to open database at ${candidate}:`, error);
+    }
+  }
+
+  throw lastError instanceof Error ? lastError : new Error('Unable to open SQLite database');
+}
+
+const opened = openDatabase();
+export const db = opened.database;
+export const DB_PATH = opened.path;
 
 export function initDb() {
   db.exec(`
