@@ -13,6 +13,43 @@ function toSqliteDate(date: Date): string {
   return date.toISOString().replace('T', ' ').slice(0, 19);
 }
 
+function getScheduleStart(now: Date, requestedStartHour: number): Date {
+  const requestedStart = new Date(now);
+  requestedStart.setHours(requestedStartHour, 0, 0, 0);
+
+  const minimumStart = new Date(now.getTime() + 5 * 60 * 1000);
+  return requestedStart > minimumStart ? requestedStart : minimumStart;
+}
+
+function getMinimumGapMinutes(): number {
+  const postsPerDay = Number(process.env.POSTS_PER_DAY) || 10;
+  const startHour = Number(process.env.POST_START_HOUR) || 8;
+  const endHour = Number(process.env.POST_END_HOUR) || 22;
+  const windowMinutes = Math.max(60, (endHour - startHour) * 60);
+  return Math.max(30, Math.floor(windowMinutes / postsPerDay));
+}
+
+function publishedTooRecently(): boolean {
+  const row = db
+    .prepare(
+      `SELECT published_at
+       FROM pending_posts
+       WHERE status = 'published'
+         AND published_at IS NOT NULL
+       ORDER BY published_at DESC
+       LIMIT 1`,
+    )
+    .get() as { published_at?: string } | undefined;
+
+  if (!row?.published_at) {
+    return false;
+  }
+
+  const lastPublishedAt = new Date(`${row.published_at}Z`);
+  const elapsedMinutes = (Date.now() - lastPublishedAt.getTime()) / 60000;
+  return elapsedMinutes < getMinimumGapMinutes();
+}
+
 export function hasPendingPostsForDay(day: string): boolean {
   const row = db
     .prepare(
@@ -32,11 +69,14 @@ export function enqueuePosts(posts: GeneratedPost[], startHour: number, endHour:
   }
 
   const day = now.toISOString().slice(0, 10);
-  const start = new Date(now);
-  start.setHours(startHour, 0, 0, 0);
+  const start = getScheduleStart(now, startHour);
 
   const end = new Date(now);
   end.setHours(endHour, 0, 0, 0);
+
+  if (end <= start) {
+    end.setTime(start.getTime() + posts.length * 90 * 60 * 1000);
+  }
 
   const gapMinutes = ((end.getTime() - start.getTime()) / 60000) / posts.length;
   const insert = db.prepare(`
@@ -63,7 +103,7 @@ export function enqueuePosts(posts: GeneratedPost[], startHour: number, endHour:
   });
 
   transaction();
-  console.log(`Queued ${posts.length} posts for ${day}`);
+  console.log(`Queued ${posts.length} posts for ${day} starting at ${toSqliteDate(start)}`);
 }
 
 export async function dispatchNextPost(): Promise<void> {
@@ -74,6 +114,10 @@ export async function dispatchNextPost(): Promise<void> {
   dispatchInFlight = true;
 
   try {
+    if (publishedTooRecently()) {
+      return;
+    }
+
     const next = db
       .prepare(`
         SELECT id, content as text, topic, source_name as sourceName,
