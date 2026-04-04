@@ -8,6 +8,10 @@ import { dispatchNextPost, enqueuePosts, hasPendingPostsForDay, pruneDuplicatePe
 import { sendDailyReport, startTelegramPolling } from './telegram.js';
 import { missingXEnvVars } from './x-client.js';
 
+function isPostingPaused(): boolean {
+  return ['1', 'true', 'yes', 'on'].includes((process.env.POSTING_PAUSED || '').toLowerCase());
+}
+
 function requiredEnvVars(): string[] {
   const required = [...missingXEnvVars(), 'GROQ_API_KEY'];
 
@@ -16,6 +20,11 @@ function requiredEnvVars(): string[] {
 
 async function dailyPipeline() {
   console.log('Starting daily pipeline');
+
+  if (isPostingPaused()) {
+    console.log('Posting paused by POSTING_PAUSED flag, skipping pipeline');
+    return;
+  }
 
   const missing = requiredEnvVars();
   if (missing.length) {
@@ -60,6 +69,10 @@ cron.schedule('0 */6 * * *', () => {
 });
 
 cron.schedule('* * * * *', () => {
+  if (isPostingPaused()) {
+    return;
+  }
+
   const day = new Date().toISOString().slice(0, 10);
   const pruned = pruneDuplicatePendingPosts(day);
   if (pruned) {
