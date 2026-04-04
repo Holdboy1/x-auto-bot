@@ -23,8 +23,8 @@ async function dailyPipeline() {
     return;
   }
 
-  const topics = await fetchTrends();
-  const posts = await generatePosts(topics, Number(process.env.POSTS_PER_DAY) || 10);
+  const items = await fetchTrends();
+  const posts = await generatePosts(items, Number(process.env.POSTS_PER_DAY) || 10);
 
   if (!posts.length) {
     console.error('No posts generated, aborting pipeline');

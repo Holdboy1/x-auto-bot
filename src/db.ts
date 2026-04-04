@@ -46,7 +46,11 @@ export function initDb() {
       replies     INTEGER DEFAULT 0,
       impressions INTEGER DEFAULT 0,
       score       REAL DEFAULT 0,
-      checked_at  TEXT
+      checked_at  TEXT,
+      source_name TEXT,
+      source_title TEXT,
+      source_url  TEXT,
+      angle_hint  TEXT
     );
 
     CREATE TABLE IF NOT EXISTS top_performers (
@@ -57,6 +61,19 @@ export function initDb() {
       saved_at  TEXT DEFAULT (datetime('now'))
     );
   `);
+
+  const columns = db.prepare(`PRAGMA table_info(posts)`).all() as Array<{ name: string }>;
+  const existing = new Set(columns.map((column) => column.name));
+  const addColumnIfMissing = (name: string, sqlType: string) => {
+    if (!existing.has(name)) {
+      db.exec(`ALTER TABLE posts ADD COLUMN ${name} ${sqlType}`);
+    }
+  };
+
+  addColumnIfMissing('source_name', 'TEXT');
+  addColumnIfMissing('source_title', 'TEXT');
+  addColumnIfMissing('source_url', 'TEXT');
+  addColumnIfMissing('angle_hint', 'TEXT');
 
   console.log(`DB initialised at ${DB_PATH}`);
 }

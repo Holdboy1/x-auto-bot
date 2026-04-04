@@ -12,9 +12,17 @@ export async function publishPost(post: GeneratedPost) {
     const tweet = await client.v2.tweet(post.text);
 
     db.prepare(`
-      INSERT INTO posts (tweet_id, content, topic, posted_at)
-      VALUES (?, ?, ?, datetime('now'))
-    `).run(tweet.data.id, post.text, post.topic);
+      INSERT INTO posts (tweet_id, content, topic, posted_at, source_name, source_title, source_url, angle_hint)
+      VALUES (?, ?, ?, datetime('now'), ?, ?, ?, ?)
+    `).run(
+      tweet.data.id,
+      post.text,
+      post.topic,
+      post.sourceName || null,
+      post.sourceTitle || null,
+      post.sourceUrl || null,
+      post.angleHint || null,
+    );
 
     console.log(`Posted [${post.topic}]: ${post.text.slice(0, 60)}...`);
     return tweet.data.id;

@@ -1,9 +1,14 @@
 import { db } from './db.js';
 import { PERSONA, getMood } from './persona.js';
+import type { TrendItem } from './trends.js';
 
 export type GeneratedPost = {
   text: string;
   topic: string;
+  sourceName?: string;
+  sourceTitle?: string;
+  sourceUrl?: string;
+  angleHint?: string;
 };
 
 const GROQ_API = 'https://api.groq.com/openai/v1/chat/completions';
@@ -43,22 +48,32 @@ function getRecentPostsContext(): string {
     .join('\n')}`;
 }
 
-function sanitizePosts(posts: GeneratedPost[], count: number, topics: string[]): GeneratedPost[] {
-  const fallbackTopic = topics[0] ?? 'general';
+function sanitizePosts(posts: GeneratedPost[], count: number, items: TrendItem[]): GeneratedPost[] {
+  const fallbackItem = items[0];
 
   return posts
     .filter((post) => typeof post?.text === 'string' && post.text.trim())
     .slice(0, count)
     .map((post) => ({
       text: post.text.trim().slice(0, 280),
-      topic: (post.topic || fallbackTopic).trim(),
+      topic: (post.topic || fallbackItem?.topic || 'general').trim(),
+      sourceName: post.sourceName || fallbackItem?.source,
+      sourceTitle: post.sourceTitle || fallbackItem?.topic,
+      sourceUrl: post.sourceUrl || fallbackItem?.url,
+      angleHint: post.angleHint || fallbackItem?.angleHint,
     }));
 }
 
-export async function generatePosts(topics: string[], count = 10): Promise<GeneratedPost[]> {
+export async function generatePosts(items: TrendItem[], count = 10): Promise<GeneratedPost[]> {
   const { mood, debateFormat } = getMood();
   const topPerformers = getTopPerformersContext();
   const recentPosts = getRecentPostsContext();
+  const formattedItems = items
+    .map(
+      (item, index) =>
+        `${index + 1}. titulo: ${item.topic}\nfonte: ${item.source}\nresumo: ${item.summary}\ncategoria: ${item.category}\nsinal: ${item.signal}\nangulo sugerido: ${item.angleHint}\nurl: ${item.url || 'n/a'}`,
+    )
+    .join('\n\n');
 
   const systemPrompt = `Voce escreve posts no X imitando a voz de uma pessoa real.
 
@@ -80,15 +95,19 @@ REGRAS ABSOLUTAS:
 - Responda APENAS com JSON valido, sem markdown, sem explicacao
 
 Formato:
-[{"text":"conteudo do post","topic":"nome do topico"}]`;
+[{"text":"conteudo do post","topic":"nome do topico","sourceName":"fonte","sourceTitle":"titulo-fonte","sourceUrl":"url","angleHint":"angulo usado"}]`;
 
   const userPrompt = `Humor agora: ${mood}
 Formato de debate para usar em pelo menos 3 posts: ${debateFormat}
 
-Topicos em alta hoje: ${topics.join(', ')}
+Itens de noticia e tendencia de hoje:
+${formattedItems}
 
-Gere exatamente ${count} posts unicos sobre esses topicos.
+Gere exatamente ${count} posts unicos sobre esses itens.
 - Pelo menos 3 deles devem ser no formato de debate/engajamento acima
+- Cada post precisa nascer de um item especifico de noticia ou tendencia
+- Nao resuma a manchete. transforme o fato em leitura propria
+- Se a noticia pedir, puxe segunda ordem, comportamento de mercado ou tese
 - Frases curtas e naturais
 - Pode usar pergunta retorica
 - Hashtag so quando ajudar
@@ -138,7 +157,7 @@ ${recentPosts}`;
 
     const clean = raw.replace(/```json|```/g, '').trim();
     const parsed = JSON.parse(clean) as GeneratedPost[];
-    const posts = sanitizePosts(parsed, count, topics);
+    const posts = sanitizePosts(parsed, count, items);
 
     console.log(`Generated ${posts.length} posts via Groq`);
     return posts;

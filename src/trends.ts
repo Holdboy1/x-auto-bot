@@ -1,9 +1,14 @@
 import Parser from 'rss-parser';
 
-type TrendCandidate = {
+export type TrendItem = {
   topic: string;
   source: string;
   score: number;
+  url?: string;
+  summary: string;
+  category: 'ai' | 'crypto' | 'web3' | 'tech' | 'general';
+  signal: 'trend' | 'market' | 'news' | 'community';
+  angleHint: string;
 };
 
 type HackerNewsHit = {
@@ -21,6 +26,7 @@ type CoinGeckoTrendingResponse = {
 };
 
 type CoinGeckoMarketCoin = {
+  id?: string;
   name?: string;
   symbol?: string;
   price_change_percentage_24h?: number;
@@ -75,12 +81,52 @@ const NEWS_RSS_FEEDS = [
   { url: 'https://techcrunch.com/feed/', source: 'TechCrunch', score: 5 },
 ];
 
-const FALLBACK_TOPICS = [
-  'Bitcoin price action',
-  'Ethereum ecosystem',
-  'AI agents',
-  'Web3 development',
-  'DeFi protocols',
+const FALLBACK_TOPICS: TrendItem[] = [
+  {
+    topic: 'Bitcoin price action',
+    source: 'Fallback',
+    score: 1,
+    summary: 'Leitura de mercado sobre Bitcoin quando as fontes do dia vierem fracas.',
+    category: 'crypto',
+    signal: 'market',
+    angleHint: 'escreve como leitura de mercado, sem parecer boletim',
+  },
+  {
+    topic: 'Ethereum ecosystem',
+    source: 'Fallback',
+    score: 1,
+    summary: 'Gancho evergreen sobre Ethereum e infraestrutura.',
+    category: 'crypto',
+    signal: 'market',
+    angleHint: 'nao resuma a manchete. escreva como se voce tivesse uma leitura propria do fato',
+  },
+  {
+    topic: 'AI agents',
+    source: 'Fallback',
+    score: 1,
+    summary: 'Tema recorrente de produto, distribuicao e confianca em IA.',
+    category: 'ai',
+    signal: 'trend',
+    angleHint: 'liga o fato com distribuicao, produto ou confianca',
+  },
+  {
+    topic: 'Web3 development',
+    source: 'Fallback',
+    score: 1,
+    summary: 'Infra e construcao de produto em web3.',
+    category: 'web3',
+    signal: 'trend',
+    angleHint: 'puxa para comportamento de mercado ou da comunidade',
+  },
+  {
+    topic: 'DeFi protocols',
+    source: 'Fallback',
+    score: 1,
+    summary: 'Tema evergreen de protocolos, liquidez e narrativa.',
+    category: 'crypto',
+    signal: 'market',
+    angleHint: 'escreve como leitura de mercado, sem parecer boletim',
+  },
 ];
 
 const NOISY_PATTERNS = [
@@ -112,8 +158,34 @@ function isRelevantTopic(topic: string): boolean {
   );
 }
 
-function dedupeAndRank(candidates: TrendCandidate[], limit = 5): string[] {
-  const merged = new Map<string, TrendCandidate>();
+function classifyCategory(text: string): TrendItem['category'] {
+  const lowered = text.toLowerCase();
+  if (/(bitcoin|ethereum|solana|defi|altcoin|token|crypto|etf|dex)/.test(lowered)) return 'crypto';
+  if (/(web3|blockchain|onchain|wallet|layer2|layer 2)/.test(lowered)) return 'web3';
+  if (/(ai|openai|gpt|llm|agent|agents|anthropic|model)/.test(lowered)) return 'ai';
+  if (/(tech|developer|startup|software|chip|semiconductor|cloud)/.test(lowered)) return 'tech';
+  return 'general';
+}
+
+function pickAngleHint(text: string, signal: TrendItem['signal']): string {
+  const lowered = text.toLowerCase();
+  if (/(raises|funding|launch|ships|debuts|rolls out|release)/.test(lowered)) {
+    return 'transforma o fato em leitura de segunda ordem sobre quem ganha com isso';
+  }
+  if (/(etf|price|surge|falls|rally|volume|market cap|inflows|outflows)/.test(lowered)) {
+    return 'escreve como leitura de mercado, sem parecer boletim';
+  }
+  if (/(hiring|community|reddit|users|adoption)/.test(lowered) || signal === 'community') {
+    return 'puxa para comportamento de mercado ou da comunidade';
+  }
+  if (/(ai|model|agent|llm|openai|anthropic)/.test(lowered)) {
+    return 'liga o fato com distribuicao, produto ou confianca';
+  }
+  return 'nao repita a manchete. escreva como se voce tivesse uma leitura propria do fato';
+}
+
+function dedupeAndRank(candidates: TrendItem[], limit = 5): TrendItem[] {
+  const merged = new Map<string, TrendItem>();
 
   for (const candidate of candidates) {
     const normalized = normalizeTopic(candidate.topic);
@@ -128,9 +200,8 @@ function dedupeAndRank(candidates: TrendCandidate[], limit = 5): string[] {
     }
 
     merged.set(normalized.toLowerCase(), {
+      ...candidate,
       topic: normalized,
-      source: candidate.source,
-      score: candidate.score,
     });
   }
 
@@ -149,7 +220,7 @@ function dedupeAndRank(candidates: TrendCandidate[], limit = 5): string[] {
   };
 
   const usedPerSource = new Map<string, number>();
-  const selected: string[] = [];
+  const selected: TrendItem[] = [];
 
   for (const item of ranked) {
     if (selected.length >= limit) {
@@ -163,7 +234,7 @@ function dedupeAndRank(candidates: TrendCandidate[], limit = 5): string[] {
       continue;
     }
 
-    selected.push(item.topic);
+    selected.push(item);
     usedPerSource.set(item.source, used + 1);
   }
 
@@ -201,8 +272,8 @@ async function parseFeed(url: string) {
   return parser.parseString(xml);
 }
 
-async function fetchGoogleTrendTopics(): Promise<TrendCandidate[]> {
-  const candidates: TrendCandidate[] = [];
+async function fetchGoogleTrendTopics(): Promise<TrendItem[]> {
+  const candidates: TrendItem[] = [];
 
   await Promise.all(
     GOOGLE_TRENDS_FEEDS.map(async (url) => {
@@ -214,6 +285,11 @@ async function fetchGoogleTrendTopics(): Promise<TrendCandidate[]> {
               topic: item.title,
               source: 'Google Trends',
               score: 7,
+              url: item.link,
+              summary: 'Sinal de busca subindo agora no Google Trends.',
+              category: classifyCategory(item.title),
+              signal: 'trend',
+              angleHint: pickAngleHint(item.title, 'trend'),
             });
           }
         }
@@ -226,8 +302,8 @@ async function fetchGoogleTrendTopics(): Promise<TrendCandidate[]> {
   return candidates;
 }
 
-async function fetchRedditTopics(): Promise<TrendCandidate[]> {
-  const candidates: TrendCandidate[] = [];
+async function fetchRedditTopics(): Promise<TrendItem[]> {
+  const candidates: TrendItem[] = [];
 
   await Promise.all(
     REDDIT_RSS_FEEDS.map(async (url) => {
@@ -239,6 +315,11 @@ async function fetchRedditTopics(): Promise<TrendCandidate[]> {
               topic: item.title,
               source: 'Reddit',
               score: 5,
+              url: item.link,
+              summary: item.contentSnippet || 'Discussao de comunidade ganhando tracao no Reddit.',
+              category: classifyCategory(item.title),
+              signal: 'community',
+              angleHint: pickAngleHint(item.title, 'community'),
             });
           }
         }
@@ -251,8 +332,8 @@ async function fetchRedditTopics(): Promise<TrendCandidate[]> {
   return candidates;
 }
 
-async function fetchNewsTopics(): Promise<TrendCandidate[]> {
-  const candidates: TrendCandidate[] = [];
+async function fetchNewsTopics(): Promise<TrendItem[]> {
+  const candidates: TrendItem[] = [];
 
   await Promise.all(
     NEWS_RSS_FEEDS.map(async ({ url, source, score }) => {
@@ -264,6 +345,11 @@ async function fetchNewsTopics(): Promise<TrendCandidate[]> {
               topic: item.title,
               source,
               score,
+              url: item.link,
+              summary: item.contentSnippet || `Noticia recente em ${source}.`,
+              category: classifyCategory(item.title),
+              signal: 'news',
+              angleHint: pickAngleHint(item.title, 'news'),
             });
           }
         }
@@ -280,7 +366,7 @@ async function fetchNewsTopics(): Promise<TrendCandidate[]> {
   return candidates;
 }
 
-async function fetchHackerNewsTopics(): Promise<TrendCandidate[]> {
+async function fetchHackerNewsTopics(): Promise<TrendItem[]> {
   try {
     const data = await fetchJson<{ hits?: HackerNewsHit[] }>(
       'https://hn.algolia.com/api/v1/search?tags=front_page',
@@ -293,6 +379,11 @@ async function fetchHackerNewsTopics(): Promise<TrendCandidate[]> {
         topic: hit.title as string,
         source: 'Hacker News',
         score: 4,
+        url: undefined,
+        summary: 'Assunto em destaque na front page do Hacker News.',
+        category: classifyCategory(hit.title as string),
+        signal: 'community',
+        angleHint: pickAngleHint(hit.title as string, 'community'),
       }));
   } catch (error) {
     console.error('Hacker News fetch error:', error);
@@ -300,8 +391,8 @@ async function fetchHackerNewsTopics(): Promise<TrendCandidate[]> {
   }
 }
 
-async function fetchCoinGeckoTopics(): Promise<TrendCandidate[]> {
-  const candidates: TrendCandidate[] = [];
+async function fetchCoinGeckoTopics(): Promise<TrendItem[]> {
+  const candidates: TrendItem[] = [];
 
   try {
     const trending = await fetchJson<CoinGeckoTrendingResponse>(
@@ -318,6 +409,11 @@ async function fetchCoinGeckoTopics(): Promise<TrendCandidate[]> {
         topic: `${item.name} (${item.symbol.toUpperCase()}) trending on CoinGecko`,
         source: 'CoinGecko',
         score: 9,
+        url: `https://www.coingecko.com/en/coins/${item.name.toLowerCase().replace(/\s+/g, '-')}`,
+        summary: `${item.name} apareceu entre os ativos em alta observacao na CoinGecko.`,
+        category: classifyCategory(item.name),
+        signal: 'market',
+        angleHint: pickAngleHint(item.name, 'market'),
       });
 
       if (item.market_cap_rank && item.market_cap_rank <= 200) {
@@ -325,6 +421,11 @@ async function fetchCoinGeckoTopics(): Promise<TrendCandidate[]> {
           topic: `${item.name} market cap rank spotlight`,
           source: 'CoinGecko',
           score: 6,
+          url: `https://www.coingecko.com/en/coins/${item.name.toLowerCase().replace(/\s+/g, '-')}`,
+          summary: `${item.name} ganhou destaque de ranking e pode puxar narrativa de mercado.`,
+          category: classifyCategory(item.name),
+          signal: 'market',
+          angleHint: pickAngleHint(item.name, 'market'),
         });
       }
     }
@@ -350,6 +451,11 @@ async function fetchCoinGeckoTopics(): Promise<TrendCandidate[]> {
         topic: `${coin.name} (${coin.symbol.toUpperCase()}) 24h move ${change}%`,
         source: 'CoinGecko',
         score: 7,
+        url: `https://www.coingecko.com/en/coins/${coin.id ?? coin.name.toLowerCase().replace(/\s+/g, '-')}`,
+        summary: `${coin.name} mexeu ${change}% nas ultimas 24h e entrou no radar de movers.`,
+        category: classifyCategory(coin.name),
+        signal: 'market',
+        angleHint: pickAngleHint(`${coin.name} ${change}%`, 'market'),
       });
     }
   } catch (error) {
@@ -359,7 +465,7 @@ async function fetchCoinGeckoTopics(): Promise<TrendCandidate[]> {
   return candidates;
 }
 
-export async function fetchTrends(): Promise<string[]> {
+export async function fetchTrends(): Promise<TrendItem[]> {
   const candidateGroups = await Promise.all([
     fetchGoogleTrendTopics(),
     fetchRedditTopics(),
@@ -374,7 +480,7 @@ export async function fetchTrends(): Promise<string[]> {
 
   console.log('Trend sources gathered:', {
     totalCandidates: candidates.length,
-    selectedTopics: result,
+    selectedTopics: result.map((item) => item.topic),
   });
 
   return result;
