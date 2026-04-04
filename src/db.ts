@@ -60,7 +60,24 @@ export function initDb() {
       topic     TEXT,
       saved_at  TEXT DEFAULT (datetime('now'))
     );
-  `);
+
+    CREATE TABLE IF NOT EXISTS pending_posts (
+      id            INTEGER PRIMARY KEY AUTOINCREMENT,
+      content       TEXT NOT NULL,
+      topic         TEXT,
+      scheduled_for TEXT NOT NULL,
+      status        TEXT NOT NULL DEFAULT 'queued',
+      created_for_day TEXT,
+      source_name   TEXT,
+      source_title  TEXT,
+      source_url    TEXT,
+      angle_hint    TEXT,
+      tweet_id      TEXT,
+      published_at  TEXT,
+      failed_at     TEXT,
+      failure_reason TEXT
+    );
+ `);
 
   const columns = db.prepare(`PRAGMA table_info(posts)`).all() as Array<{ name: string }>;
   const existing = new Set(columns.map((column) => column.name));

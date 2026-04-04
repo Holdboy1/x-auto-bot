@@ -3,8 +3,8 @@ import cron from 'node-cron';
 import { initDb } from './db.js';
 import { collectEngagement } from './engagement.js';
 import { generatePosts } from './generator.js';
-import { publishPost } from './publisher.js';
 import { fetchTrends } from './trends.js';
+import { dispatchNextPost, enqueuePosts, hasPendingPostsForDay } from './scheduler.js';
 import { sendDailyReport, startTelegramPolling } from './telegram.js';
 import { missingXEnvVars } from './x-client.js';
 
@@ -23,6 +23,12 @@ async function dailyPipeline() {
     return;
   }
 
+  const day = new Date().toISOString().slice(0, 10);
+  if (hasPendingPostsForDay(day)) {
+    console.log(`Pending posts already exist for ${day}, skipping regeneration`);
+    return;
+  }
+
   const items = await fetchTrends();
   const posts = await generatePosts(items, Number(process.env.POSTS_PER_DAY) || 10);
 
@@ -33,16 +39,8 @@ async function dailyPipeline() {
 
   const startHour = Number(process.env.POST_START_HOUR) || 8;
   const endHour = Number(process.env.POST_END_HOUR) || 22;
-  const gapMinutes = ((endHour - startHour) * 60) / posts.length;
-
-  posts.forEach((post, index) => {
-    const delayMs = index * gapMinutes * 60 * 1000;
-    setTimeout(() => {
-      void publishPost(post);
-    }, delayMs);
-  });
-
-  console.log(`Scheduled ${posts.length} posts every ~${Math.round(gapMinutes)} minutes`);
+  enqueuePosts(posts, startHour, endHour);
+  console.log(`Queued ${posts.length} posts between ${startHour}:00 and ${endHour}:00`);
 }
 
 initDb();
@@ -53,6 +51,10 @@ cron.schedule('0 7 * * *', () => {
 
 cron.schedule('0 */6 * * *', () => {
   void collectEngagement();
+});
+
+cron.schedule('* * * * *', () => {
+  void dispatchNextPost();
 });
 
 cron.schedule('0 23 * * *', () => {
