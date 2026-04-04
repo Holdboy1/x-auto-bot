@@ -6,15 +6,10 @@ import { generatePosts } from './generator.js';
 import { publishPost } from './publisher.js';
 import { fetchTrends } from './trends.js';
 import { sendDailyReport, startTelegramPolling } from './telegram.js';
+import { missingXEnvVars } from './x-client.js';
 
 function requiredEnvVars(): string[] {
-  const required = [
-    'X_API_KEY',
-    'X_API_SECRET',
-    'X_ACCESS_TOKEN',
-    'X_ACCESS_SECRET',
-    'GROQ_API_KEY',
-  ];
+  const required = [...missingXEnvVars(), 'GROQ_API_KEY'];
 
   return required.filter((key) => !process.env[key]);
 }
