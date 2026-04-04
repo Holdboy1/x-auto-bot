@@ -41,6 +41,16 @@ const DEFAULT_HEADERS = {
 };
 
 const NICHE_KEYWORDS = [
+  'gamma',
+  'claude',
+  'claude code',
+  'cursor',
+  'perplexity',
+  'windsurf',
+  'copilot',
+  'gemini',
+  'midjourney',
+  'runway',
   'crypto',
   'bitcoin',
   'ethereum',
@@ -73,9 +83,21 @@ const GOOGLE_TRENDS_FEEDS = [
 const X_SEARCH_QUERIES = [
   {
     query:
-      '(AI OR "artificial intelligence" OR OpenAI OR Anthropic OR GPT OR LLM OR agents) lang:en -is:retweet',
+      '(AI OR "artificial intelligence" OR OpenAI OR Anthropic OR Claude OR "Claude Code" OR Gamma OR Cursor OR Perplexity OR Windsurf OR Copilot OR GPT OR LLM OR agents) lang:en -is:retweet',
     category: 'ai' as const,
     angleHint: 'liga o fato com distribuicao, produto ou confianca',
+  },
+  {
+    query:
+      '("source code" OR leak OR leaked OR jailbreak OR "prompt leak" OR breach OR outage) (Claude OR OpenAI OR Anthropic OR Cursor OR Perplexity OR Gamma OR Copilot OR AI) lang:en -is:retweet',
+    category: 'ai' as const,
+    angleHint: 'trata como incidente ou vazamento: explica o que isso muda em confianca, produto e vantagem competitiva',
+  },
+  {
+    query:
+      '(launch OR released OR rollout OR pricing OR feature OR agent OR workspace) (Gamma OR Claude OR "Claude Code" OR Cursor OR Perplexity OR Copilot OR OpenAI OR Anthropic) lang:en -is:retweet',
+    category: 'ai' as const,
+    angleHint: 'olha para produto, distribuicao e quem ganha com esse movimento',
   },
   {
     query:
@@ -184,13 +206,19 @@ function classifyCategory(text: string): TrendItem['category'] {
   const lowered = text.toLowerCase();
   if (/(bitcoin|ethereum|solana|defi|altcoin|token|crypto|etf|dex)/.test(lowered)) return 'crypto';
   if (/(web3|blockchain|onchain|wallet|layer2|layer 2)/.test(lowered)) return 'web3';
-  if (/(ai|openai|gpt|llm|agent|agents|anthropic|model)/.test(lowered)) return 'ai';
+  if (/(ai|openai|gpt|llm|agent|agents|anthropic|model|claude|gamma|cursor|perplexity|windsurf|copilot|gemini|midjourney|runway)/.test(lowered)) return 'ai';
   if (/(tech|developer|startup|software|chip|semiconductor|cloud)/.test(lowered)) return 'tech';
   return 'general';
 }
 
 function pickAngleHint(text: string, signal: TrendItem['signal']): string {
   const lowered = text.toLowerCase();
+  if (/(leak|leaked|source code|prompt leak|breach|outage|incident|jailbreak|exposed)/.test(lowered)) {
+    return 'trata como incidente ou vazamento. explica o impacto em confianca, governanca e moat de produto';
+  }
+  if (/(gamma|claude|claude code|cursor|perplexity|windsurf|copilot|openai|anthropic|gemini|midjourney|runway)/.test(lowered)) {
+    return 'traduz o movimento de produto e mostra o que isso muda em distribuicao, ux, confianca ou moat';
+  }
   if (/(raises|funding|launch|ships|debuts|rolls out|release)/.test(lowered)) {
     return 'transforma o fato em leitura de segunda ordem sobre quem ganha com isso';
   }

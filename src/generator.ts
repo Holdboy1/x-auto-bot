@@ -1,5 +1,5 @@
 import { db } from './db.js';
-import { PERSONA, getMood } from './persona.js';
+import { EXPLAINER_PERSONA, PERSONA, getMood, getVoiceMode } from './persona.js';
 import type { TrendItem } from './trends.js';
 
 export type GeneratedPost = {
@@ -101,10 +101,10 @@ export async function generatePosts(items: TrendItem[], count = 10): Promise<Gen
     return bPriority - aPriority || b.score - a.score;
   });
   const formattedItems = prioritizedItems
-    .map(
-      (item, index) =>
-        `${index + 1}. titulo: ${item.topic}\nfonte: ${item.source}\nresumo: ${item.summary}\ncategoria: ${item.category}\nsinal: ${item.signal}\nangulo sugerido: ${item.angleHint}\nurl: ${item.url || 'n/a'}`,
-    )
+    .map((item, index) => {
+      const voiceMode = getVoiceMode(item.category, item.topic, item.summary);
+      return `${index + 1}. titulo: ${item.topic}\nfonte: ${item.source}\nresumo: ${item.summary}\ncategoria: ${item.category}\nsinal: ${item.signal}\nangulo sugerido: ${item.angleHint}\nmodo de voz: ${voiceMode.mode}\norientacao de voz: ${voiceMode.guidance}\nurl: ${item.url || 'n/a'}`;
+    })
     .join('\n\n');
 
   const systemPrompt = `Voce escreve posts no X imitando a voz de uma pessoa real.
@@ -117,6 +117,12 @@ ${PERSONA.writingStyle}
 
 EXEMPLOS REAIS DE VOZ:
 ${PERSONA.voiceExamples.map((example) => `"${example}"`).join('\n')}
+
+SEGUNDO ELEMENTO DE VOZ:
+${EXPLAINER_PERSONA.writingStyle}
+
+EXEMPLOS DO MODO EXPLICADOR-BUILDER:
+${EXPLAINER_PERSONA.voiceExamples.map((example) => `"${example}"`).join('\n')}
 
 REGRAS ABSOLUTAS:
 - Escreva SEMPRE em portugues brasileiro informal
@@ -142,6 +148,8 @@ Gere exatamente ${count} posts unicos sobre esses itens.
 - Pelo menos 3 deles devem ser no formato de debate/engajamento acima
 - Cada post precisa nascer de um item especifico de noticia ou tendencia
 - Nao resuma a manchete. transforme o fato em leitura propria
+- Respeite o modo de voz sugerido em cada item
+- Quando o item for AI de produto, launch, leak ou incidente, puxe mais para explicador-builder
 - Se a noticia pedir, puxe segunda ordem, comportamento de mercado ou tese
 - Frases curtas e naturais
 - Pode usar pergunta retorica
