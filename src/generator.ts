@@ -5,6 +5,7 @@ import type { TrendItem } from './trends.js';
 export type GeneratedPost = {
   text: string;
   topic: string;
+  category?: TrendItem['category'];
   sourceName?: string;
   sourceTitle?: string;
   sourceUrl?: string;
@@ -48,27 +49,58 @@ function getRecentPostsContext(): string {
     .join('\n')}`;
 }
 
+function getItemForPost(post: GeneratedPost, items: TrendItem[]): TrendItem | undefined {
+  const candidates = [post.sourceTitle, post.topic]
+    .filter((value): value is string => Boolean(value))
+    .map((value) => value.toLowerCase());
+
+  return items.find((item) =>
+    candidates.some(
+      (candidate) =>
+        item.topic.toLowerCase().includes(candidate) || candidate.includes(item.topic.toLowerCase()),
+    ),
+  );
+}
+
 function sanitizePosts(posts: GeneratedPost[], count: number, items: TrendItem[]): GeneratedPost[] {
   const fallbackItem = items[0];
+  let cryptoCount = 0;
 
   return posts
     .filter((post) => typeof post?.text === 'string' && post.text.trim())
-    .slice(0, count)
-    .map((post) => ({
-      text: post.text.trim().slice(0, 280),
-      topic: (post.topic || fallbackItem?.topic || 'general').trim(),
-      sourceName: post.sourceName || fallbackItem?.source,
-      sourceTitle: post.sourceTitle || fallbackItem?.topic,
-      sourceUrl: post.sourceUrl || fallbackItem?.url,
-      angleHint: post.angleHint || fallbackItem?.angleHint,
-    }));
+    .map((post) => {
+      const matchedItem = getItemForPost(post, items) || fallbackItem;
+      return {
+        text: post.text.trim().slice(0, 280),
+        topic: (post.topic || matchedItem?.topic || 'general').trim(),
+        category: post.category || matchedItem?.category || 'general',
+        sourceName: post.sourceName || matchedItem?.source,
+        sourceTitle: post.sourceTitle || matchedItem?.topic,
+        sourceUrl: post.sourceUrl || matchedItem?.url,
+        angleHint: post.angleHint || matchedItem?.angleHint,
+      };
+    })
+    .filter((post) => {
+      if (post.category !== 'crypto') {
+        return true;
+      }
+
+      cryptoCount += 1;
+      return cryptoCount <= 1;
+    })
+    .slice(0, count);
 }
 
 export async function generatePosts(items: TrendItem[], count = 10): Promise<GeneratedPost[]> {
   const { mood, debateFormat } = getMood();
   const topPerformers = getTopPerformersContext();
   const recentPosts = getRecentPostsContext();
-  const formattedItems = items
+  const prioritizedItems = [...items].sort((a, b) => {
+    const aPriority = a.category === 'ai' ? 2 : a.category === 'crypto' ? 0 : 1;
+    const bPriority = b.category === 'ai' ? 2 : b.category === 'crypto' ? 0 : 1;
+    return bPriority - aPriority || b.score - a.score;
+  });
+  const formattedItems = prioritizedItems
     .map(
       (item, index) =>
         `${index + 1}. titulo: ${item.topic}\nfonte: ${item.source}\nresumo: ${item.summary}\ncategoria: ${item.category}\nsinal: ${item.signal}\nangulo sugerido: ${item.angleHint}\nurl: ${item.url || 'n/a'}`,
@@ -95,7 +127,7 @@ REGRAS ABSOLUTAS:
 - Responda APENAS com JSON valido, sem markdown, sem explicacao
 
 Formato:
-[{"text":"conteudo do post","topic":"nome do topico","sourceName":"fonte","sourceTitle":"titulo-fonte","sourceUrl":"url","angleHint":"angulo usado"}]`;
+[{"text":"conteudo do post","topic":"nome do topico","category":"ai|crypto|web3|tech|general","sourceName":"fonte","sourceTitle":"titulo-fonte","sourceUrl":"url","angleHint":"angulo usado"}]`;
 
   const userPrompt = `Humor agora: ${mood}
 Formato de debate para usar em pelo menos 3 posts: ${debateFormat}
@@ -104,6 +136,9 @@ Itens de noticia e tendencia de hoje:
 ${formattedItems}
 
 Gere exatamente ${count} posts unicos sobre esses itens.
+- Priorize AI acima dos outros temas
+- Crypto pode aparecer no maximo 1 vez no lote do dia
+- Se tiver que escolher, prefira AI e tech antes de crypto
 - Pelo menos 3 deles devem ser no formato de debate/engajamento acima
 - Cada post precisa nascer de um item especifico de noticia ou tendencia
 - Nao resuma a manchete. transforme o fato em leitura propria

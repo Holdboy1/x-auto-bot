@@ -229,7 +229,11 @@ function dedupeAndRank(candidates: TrendItem[], limit = 5): TrendItem[] {
 
   const ranked = [...merged.values()]
     .filter((item) => isRelevantTopic(item.topic))
-    .sort((a, b) => b.score - a.score);
+    .sort((a, b) => {
+      const aBoost = a.category === 'ai' ? 3 : a.category === 'tech' ? 1 : 0;
+      const bBoost = b.category === 'ai' ? 3 : b.category === 'tech' ? 1 : 0;
+      return b.score + bBoost - (a.score + aBoost);
+    });
 
   const maxPerSource: Record<string, number> = {
     CoinGecko: 2,
