@@ -1,4 +1,5 @@
 import Parser from 'rss-parser';
+import { getXClient } from './x-client.js';
 
 export type TrendItem = {
   topic: string;
@@ -67,6 +68,27 @@ const NICHE_KEYWORDS = [
 const GOOGLE_TRENDS_FEEDS = [
   'https://trends.google.com/trending/rss?geo=US&hl=en',
   'https://trends.google.com/trending/rss?geo=BR',
+];
+
+const X_SEARCH_QUERIES = [
+  {
+    query:
+      '(AI OR "artificial intelligence" OR OpenAI OR Anthropic OR GPT OR LLM OR agents) lang:en -is:retweet',
+    category: 'ai' as const,
+    angleHint: 'liga o fato com distribuicao, produto ou confianca',
+  },
+  {
+    query:
+      '(bitcoin OR ethereum OR solana OR crypto OR ETF OR defi OR onchain) lang:en -is:retweet',
+    category: 'crypto' as const,
+    angleHint: 'escreve como leitura de mercado, sem parecer boletim',
+  },
+  {
+    query:
+      '(web3 OR blockchain OR developers OR startup OR chips OR cloud) lang:en -is:retweet',
+    category: 'tech' as const,
+    angleHint: 'nao repita a manchete. escreva como se voce tivesse uma leitura propria do fato',
+  },
 ];
 
 const REDDIT_RSS_FEEDS = [
@@ -272,6 +294,84 @@ async function parseFeed(url: string) {
   return parser.parseString(xml);
 }
 
+async function fetchXSignals(): Promise<TrendItem[]> {
+  const client = getXClient();
+  if (!client) {
+    console.warn('X source unavailable, skipping X search signals');
+    return [];
+  }
+
+  const candidates: TrendItem[] = [];
+
+  for (const config of X_SEARCH_QUERIES) {
+    try {
+      const response = (await client.v2.search(config.query, {
+        max_results: 10,
+        'tweet.fields': ['created_at', 'public_metrics', 'author_id'],
+        expansions: ['author_id'],
+        'user.fields': ['username', 'name', 'verified'],
+      })) as unknown as {
+        _realData?: {
+          data?: Array<{
+            id: string;
+            text: string;
+            author_id?: string;
+            public_metrics?: {
+              like_count?: number;
+              retweet_count?: number;
+              reply_count?: number;
+              quote_count?: number;
+            };
+          }>;
+          includes?: {
+            users?: Array<{
+              id: string;
+              username?: string;
+              name?: string;
+              verified?: boolean;
+            }>;
+          };
+        };
+      };
+
+      const users = new Map(
+        (response._realData?.includes?.users ?? []).map((user) => [user.id, user]),
+      );
+
+      for (const post of response._realData?.data ?? []) {
+        const metrics = post.public_metrics ?? {};
+        const score =
+          (metrics.like_count ?? 0) * 1 +
+          (metrics.retweet_count ?? 0) * 3 +
+          (metrics.reply_count ?? 0) * 4 +
+          (metrics.quote_count ?? 0) * 4;
+
+        const author = post.author_id ? users.get(post.author_id) : undefined;
+        const topic = normalizeTopic(post.text).slice(0, 180);
+
+        if (!topic || !isRelevantTopic(topic)) {
+          continue;
+        }
+
+        candidates.push({
+          topic,
+          source: 'X',
+          score: Math.max(6, Math.min(12, Math.round(score / 10) + 6)),
+          url: author?.username ? `https://x.com/${author.username}/status/${post.id}` : undefined,
+          summary: `Post em alta no X${author?.username ? ` por @${author.username}` : ''} com sinais recentes de engajamento.`,
+          category: config.category,
+          signal: 'community',
+          angleHint: config.angleHint,
+        });
+      }
+    } catch (error) {
+      console.error('X search fetch error:', config.query, error);
+    }
+  }
+
+  return candidates;
+}
+
 async function fetchGoogleTrendTopics(): Promise<TrendItem[]> {
   const candidates: TrendItem[] = [];
 
@@ -467,6 +567,7 @@ async function fetchCoinGeckoTopics(): Promise<TrendItem[]> {
 
 export async function fetchTrends(): Promise<TrendItem[]> {
   const candidateGroups = await Promise.all([
+    fetchXSignals(),
     fetchGoogleTrendTopics(),
     fetchRedditTopics(),
     fetchHackerNewsTopics(),
