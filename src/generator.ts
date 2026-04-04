@@ -1,4 +1,5 @@
 import { db } from './db.js';
+import { PERSONA, getMood } from './persona.js';
 
 export type GeneratedPost = {
   text: string;
@@ -10,15 +11,35 @@ const GROQ_MODEL = process.env.GROQ_MODEL || 'llama-3.3-70b-versatile';
 
 function getTopPerformersContext(): string {
   const rows = db
-    .prepare('SELECT content FROM top_performers ORDER BY score DESC LIMIT 5')
+    .prepare('SELECT content FROM top_performers ORDER BY score DESC LIMIT 8')
     .all() as { content: string }[];
 
   if (!rows.length) {
     return '';
   }
 
-  return `\nTop posts that performed best recently. Use them only as style reference, not as templates:\n${rows
-    .map((row) => `- ${row.content}`)
+  return `\nPosts anteriores que mais engajaram. Aprenda o estilo e evolua a partir deles:\n${rows
+    .map((row) => `"${row.content}"`)
+    .join('\n')}`;
+}
+
+function getRecentPostsContext(): string {
+  const rows = db
+    .prepare(`
+      SELECT content
+      FROM posts
+      WHERE posted_at >= datetime('now', '-24 hours')
+      ORDER BY posted_at DESC
+      LIMIT 10
+    `)
+    .all() as { content: string }[];
+
+  if (!rows.length) {
+    return '';
+  }
+
+  return `\nPosts ja publicados hoje. NUNCA repita o mesmo assunto ou estrutura:\n${rows
+    .map((row) => `"${row.content}"`)
     .join('\n')}`;
 }
 
@@ -35,23 +56,45 @@ function sanitizePosts(posts: GeneratedPost[], count: number, topics: string[]):
 }
 
 export async function generatePosts(topics: string[], count = 10): Promise<GeneratedPost[]> {
+  const { mood, debateFormat } = getMood();
   const topPerformers = getTopPerformersContext();
+  const recentPosts = getRecentPostsContext();
 
-  const prompt = `You are a crypto/web3/tech Twitter influencer with a sharp, insightful voice.
-Generate exactly ${count} tweets about these trending topics: ${topics.join(', ')}.
+  const systemPrompt = `Voce escreve posts no X imitando a voz de uma pessoa real.
 
-Rules:
-- Max 280 characters each
-- Mix formats: hot takes, stats, questions, thread teasers, alpha insights
-- 2-3 relevant hashtags per tweet
-- Max 2 emojis per tweet
-- Vary tone: bullish, analytical, provocative
-- English only
-- Never repeat the same structure twice
+IDENTIDADE DO DONO:
+${PERSONA.identity}
+
+ESTILO DE ESCRITA:
+${PERSONA.writingStyle}
+
+EXEMPLOS REAIS DE VOZ:
+${PERSONA.voiceExamples.map((example) => `"${example}"`).join('\n')}
+
+REGRAS ABSOLUTAS:
+- Escreva SEMPRE em portugues brasileiro informal
+- NUNCA soe como bot, robo, jornalista ou post corporativo
+- NUNCA use estruturas como "Sabia que", "Descubra", "E importante"
+- NUNCA enumere pontos
+- Cada post deve parecer que foi digitado na hora, com opiniao real
+- Responda APENAS com JSON valido, sem markdown, sem explicacao
+
+Formato:
+[{"text":"conteudo do post","topic":"nome do topico"}]`;
+
+  const userPrompt = `Humor agora: ${mood}
+Formato de debate para usar em pelo menos 3 posts: ${debateFormat}
+
+Topicos em alta hoje: ${topics.join(', ')}
+
+Gere exatamente ${count} posts unicos sobre esses topicos.
+- Pelo menos 3 deles devem ser no formato de debate/engajamento acima
+- Frases curtas e naturais
+- Pode usar pergunta retorica
+- Hashtag so quando ajudar
+- No maximo 280 caracteres
 ${topPerformers}
-
-Respond ONLY with a valid JSON array, no markdown, no extra text:
-[{"text":"tweet content","topic":"topic name"},...]`;
+${recentPosts}`;
 
   try {
     const response = await fetch(GROQ_API, {
@@ -62,17 +105,16 @@ Respond ONLY with a valid JSON array, no markdown, no extra text:
       },
       body: JSON.stringify({
         model: GROQ_MODEL,
-        max_tokens: 2000,
-        temperature: 0.85,
+        max_tokens: 2500,
+        temperature: 0.92,
         messages: [
           {
             role: 'system',
-            content:
-              'You are a crypto/web3/tech Twitter influencer. Always respond with valid JSON only, no markdown, no explanation.',
+            content: systemPrompt,
           },
           {
             role: 'user',
-            content: prompt,
+            content: userPrompt,
           },
         ],
       }),
