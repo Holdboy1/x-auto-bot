@@ -1,3 +1,4 @@
+import { buildTopicFingerprint, buildUrlFingerprint } from './content-rules.js';
 import Parser from 'rss-parser';
 import { fetchOpenGraphImageUrl } from './media.js';
 import { getXClient } from './x-client.js';
@@ -273,7 +274,7 @@ function pickAngleHint(text: string, signal: TrendItem['signal']): string {
   return 'nao repita a manchete. escreva como se voce tivesse uma leitura propria do fato';
 }
 
-function dedupeAndRank(candidates: TrendItem[], limit = 5): TrendItem[] {
+function dedupeAndRank(candidates: TrendItem[], limit = 12): TrendItem[] {
   const merged = new Map<string, TrendItem>();
 
   for (const candidate of candidates) {
@@ -282,13 +283,17 @@ function dedupeAndRank(candidates: TrendItem[], limit = 5): TrendItem[] {
       continue;
     }
 
-    const existing = merged.get(normalized.toLowerCase());
+    const dedupeKey =
+      buildUrlFingerprint(candidate.url) ||
+      buildTopicFingerprint(normalized, candidate.summary, candidate.source);
+
+    const existing = merged.get(dedupeKey);
     if (existing) {
       existing.score += candidate.score;
       continue;
     }
 
-    merged.set(normalized.toLowerCase(), {
+    merged.set(dedupeKey, {
       ...candidate,
       topic: normalized,
     });
@@ -303,13 +308,14 @@ function dedupeAndRank(candidates: TrendItem[], limit = 5): TrendItem[] {
     });
 
   const maxPerSource: Record<string, number> = {
-    CoinGecko: 2,
+    X: 4,
+    CoinGecko: 1,
     'Google Trends': 2,
     Reddit: 2,
     'Hacker News': 1,
     CryptoPanic: 2,
-    CoinDesk: 2,
-    TechCrunch: 2,
+    CoinDesk: 3,
+    TechCrunch: 3,
   };
 
   const usedPerSource = new Map<string, number>();
@@ -646,7 +652,7 @@ async function fetchCoinGeckoTopics(): Promise<TrendItem[]> {
   return candidates;
 }
 
-export async function fetchTrends(): Promise<TrendItem[]> {
+export async function fetchTrends(limit = 12): Promise<TrendItem[]> {
   const candidateGroups = await Promise.all([
     fetchXSignals(),
     fetchGoogleTrendTopics(),
@@ -657,7 +663,7 @@ export async function fetchTrends(): Promise<TrendItem[]> {
   ]);
 
   const candidates = candidateGroups.flat();
-  const rankedTopics = dedupeAndRank(candidates, 5);
+  const rankedTopics = dedupeAndRank(candidates, limit);
   const result = rankedTopics.length >= 3 ? rankedTopics : FALLBACK_TOPICS;
 
   console.log('Trend sources gathered:', {

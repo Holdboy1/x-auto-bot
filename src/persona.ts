@@ -51,6 +51,16 @@ export const DEBATE_FORMATS = [
   'compartilha uma experiencia ou erro pessoal no mercado que outros podem se identificar',
 ];
 
+export const POST_FORMATS = [
+  'pergunta curta e provocativa',
+  'leitura pratica em 2 frases',
+  'hot take seco',
+  'explicacao builder com implicacao de produto',
+  'contraste entre o que parece e o que realmente importa',
+  'observacao de mercado com segunda ordem',
+  'ponto de vista forte sem soar arrogante',
+];
+
 export function getMood(now = new Date()): { mood: string; debateFormat: string } {
   const hour = now.getHours();
   const randomFormat = DEBATE_FORMATS[Math.floor(Math.random() * DEBATE_FORMATS.length)];

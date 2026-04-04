@@ -1,3 +1,4 @@
+import { buildTopicFingerprint } from './content-rules.js';
 import { db } from './db.js';
 import type { GeneratedPost } from './generator.js';
 import { publishPost } from './publisher.js';
@@ -152,6 +153,58 @@ function publishedTooRecently(): boolean {
   return elapsedMinutes < getMinimumGapMinutes();
 }
 
+export function pruneDuplicatePendingPosts(day: string): number {
+  const rows = db
+    .prepare(
+      `SELECT id, topic, source_title, source_url, content
+       FROM pending_posts
+       WHERE created_for_day = ?
+         AND status = 'queued'
+       ORDER BY scheduled_for ASC, id ASC`,
+    )
+    .all(day) as Array<{
+      id: number;
+      topic?: string;
+      source_title?: string;
+      source_url?: string;
+      content?: string;
+    }>;
+
+  const seenSubjects = new Set<string>();
+  const duplicateIds: number[] = [];
+
+  for (const row of rows) {
+    const subjectKey = buildTopicFingerprint(row.topic, row.source_title, row.source_url, row.content);
+    if (!subjectKey) {
+      continue;
+    }
+
+    if (seenSubjects.has(subjectKey)) {
+      duplicateIds.push(row.id);
+      continue;
+    }
+
+    seenSubjects.add(subjectKey);
+  }
+
+  if (!duplicateIds.length) {
+    return 0;
+  }
+
+  const markDuplicate = db.prepare(
+    `UPDATE pending_posts
+     SET status = 'failed', failed_at = datetime('now'), failure_reason = 'pruned duplicate subject'
+     WHERE id = ?`,
+  );
+
+  const transaction = db.transaction(() => {
+    duplicateIds.forEach((id) => markDuplicate.run(id));
+  });
+
+  transaction();
+  return duplicateIds.length;
+}
+
 export function hasPendingPostsForDay(day: string): boolean {
   const row = db
     .prepare(
@@ -171,7 +224,35 @@ export function enqueuePosts(posts: GeneratedPost[], startHour: number, endHour:
   }
 
   const day = now.toISOString().slice(0, 10);
-  const scheduledDates = getScheduledDates(posts.length, now, startHour, endHour);
+  const existingRows = db
+    .prepare(
+      `SELECT topic, source_title, source_url
+       FROM pending_posts
+       WHERE created_for_day = ?
+         AND status IN ('queued', 'publishing', 'published')`,
+    )
+    .all(day) as Array<{ topic?: string; source_title?: string; source_url?: string }>;
+  const existingSubjects = new Set(
+    existingRows
+      .map((row) => buildTopicFingerprint(row.topic, row.source_title, row.source_url))
+      .filter(Boolean),
+  );
+  const uniquePosts = posts.filter((post) => {
+    const subjectKey = buildTopicFingerprint(post.topic, post.sourceTitle, post.sourceUrl);
+    if (!subjectKey || existingSubjects.has(subjectKey)) {
+      return false;
+    }
+
+    existingSubjects.add(subjectKey);
+    return true;
+  });
+
+  if (!uniquePosts.length) {
+    console.log(`Skipped enqueue for ${day}; all posts were duplicates of queued/published subjects`);
+    return;
+  }
+
+  const scheduledDates = getScheduledDates(uniquePosts.length, now, startHour, endHour);
   const insert = db.prepare(`
     INSERT INTO pending_posts (
       content, topic, scheduled_for, status, created_for_day,
@@ -180,7 +261,7 @@ export function enqueuePosts(posts: GeneratedPost[], startHour: number, endHour:
   `);
 
   const transaction = db.transaction(() => {
-    posts.forEach((post, index) => {
+    uniquePosts.forEach((post, index) => {
       const scheduledDate = scheduledDates[index] || new Date(now.getTime() + (index + 1) * 90 * 60 * 1000);
       insert.run(
         post.text,
@@ -197,7 +278,7 @@ export function enqueuePosts(posts: GeneratedPost[], startHour: number, endHour:
   });
 
   transaction();
-  console.log(`Queued ${posts.length} posts for ${day} with buckets 2/5/3`);
+  console.log(`Queued ${uniquePosts.length} posts for ${day} with buckets 2/5/3`);
 }
 
 export async function dispatchNextPost(): Promise<void> {

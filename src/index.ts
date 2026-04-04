@@ -4,7 +4,7 @@ import { initDb } from './db.js';
 import { collectEngagement } from './engagement.js';
 import { generatePosts } from './generator.js';
 import { fetchTrends } from './trends.js';
-import { dispatchNextPost, enqueuePosts, hasPendingPostsForDay } from './scheduler.js';
+import { dispatchNextPost, enqueuePosts, hasPendingPostsForDay, pruneDuplicatePendingPosts } from './scheduler.js';
 import { sendDailyReport, startTelegramPolling } from './telegram.js';
 import { missingXEnvVars } from './x-client.js';
 
@@ -24,13 +24,19 @@ async function dailyPipeline() {
   }
 
   const day = new Date().toISOString().slice(0, 10);
+  const pruned = pruneDuplicatePendingPosts(day);
+  if (pruned) {
+    console.log(`Pruned ${pruned} duplicate queued posts for ${day}`);
+  }
+
   if (hasPendingPostsForDay(day)) {
     console.log(`Pending posts already exist for ${day}, skipping regeneration`);
     return;
   }
 
-  const items = await fetchTrends();
-  const posts = await generatePosts(items, Number(process.env.POSTS_PER_DAY) || 10);
+  const postsPerDay = Number(process.env.POSTS_PER_DAY) || 10;
+  const items = await fetchTrends(Math.max(postsPerDay + 4, 12));
+  const posts = await generatePosts(items, postsPerDay);
 
   if (!posts.length) {
     console.error('No posts generated, aborting pipeline');
@@ -54,6 +60,11 @@ cron.schedule('0 */6 * * *', () => {
 });
 
 cron.schedule('* * * * *', () => {
+  const day = new Date().toISOString().slice(0, 10);
+  const pruned = pruneDuplicatePendingPosts(day);
+  if (pruned) {
+    console.log(`Pruned ${pruned} duplicate queued posts for ${day}`);
+  }
   void dispatchNextPost();
 });
 

@@ -1,5 +1,6 @@
 import { db } from './db.js';
-import { EXPLAINER_PERSONA, PERSONA, getMood, getVoiceMode } from './persona.js';
+import { buildTopicFingerprint, textSimilarity } from './content-rules.js';
+import { EXPLAINER_PERSONA, PERSONA, POST_FORMATS, getMood, getVoiceMode } from './persona.js';
 import type { TrendItem } from './trends.js';
 
 export type GeneratedPost = {
@@ -33,20 +34,20 @@ function getTopPerformersContext(): string {
 function getRecentPostsContext(): string {
   const rows = db
     .prepare(`
-      SELECT content
+      SELECT content, topic, source_title
       FROM posts
       WHERE posted_at >= datetime('now', '-24 hours')
       ORDER BY posted_at DESC
       LIMIT 10
     `)
-    .all() as { content: string }[];
+    .all() as { content: string; topic?: string; source_title?: string }[];
 
   if (!rows.length) {
     return '';
   }
 
   return `\nPosts ja publicados hoje. NUNCA repita o mesmo assunto ou estrutura:\n${rows
-    .map((row) => `"${row.content}"`)
+    .map((row) => `"${row.content}" | topico: ${row.topic || 'n/a'} | origem: ${row.source_title || 'n/a'}`)
     .join('\n')}`;
 }
 
@@ -66,6 +67,8 @@ function getItemForPost(post: GeneratedPost, items: TrendItem[]): TrendItem | un
 function sanitizePosts(posts: GeneratedPost[], count: number, items: TrendItem[]): GeneratedPost[] {
   const fallbackItem = items[0];
   let cryptoCount = 0;
+  const seenSubjects = new Set<string>();
+  const seenTexts: string[] = [];
 
   return posts
     .filter((post) => typeof post?.text === 'string' && post.text.trim())
@@ -84,11 +87,41 @@ function sanitizePosts(posts: GeneratedPost[], count: number, items: TrendItem[]
     })
     .filter((post) => {
       if (post.category !== 'crypto') {
+        const subjectKey = buildTopicFingerprint(post.topic, post.sourceTitle, post.sourceUrl);
+        if (subjectKey && seenSubjects.has(subjectKey)) {
+          return false;
+        }
+
+        if (seenTexts.some((existing) => textSimilarity(existing, post.text) >= 0.65)) {
+          return false;
+        }
+
+        if (subjectKey) {
+          seenSubjects.add(subjectKey);
+        }
+        seenTexts.push(post.text);
         return true;
       }
 
       cryptoCount += 1;
-      return cryptoCount <= 1;
+      if (cryptoCount > 1) {
+        return false;
+      }
+
+      const subjectKey = buildTopicFingerprint(post.topic, post.sourceTitle, post.sourceUrl);
+      if (subjectKey && seenSubjects.has(subjectKey)) {
+        return false;
+      }
+
+      if (seenTexts.some((existing) => textSimilarity(existing, post.text) >= 0.65)) {
+        return false;
+      }
+
+      if (subjectKey) {
+        seenSubjects.add(subjectKey);
+      }
+      seenTexts.push(post.text);
+      return true;
     })
     .slice(0, count);
 }
@@ -105,7 +138,8 @@ export async function generatePosts(items: TrendItem[], count = 10): Promise<Gen
   const formattedItems = prioritizedItems
     .map((item, index) => {
       const voiceMode = getVoiceMode(item.category, item.topic, item.summary);
-      return `${index + 1}. titulo: ${item.topic}\nfonte: ${item.source}\nresumo: ${item.summary}\ncategoria: ${item.category}\nsinal: ${item.signal}\nangulo sugerido: ${item.angleHint}\nmodo de voz: ${voiceMode.mode}\norientacao de voz: ${voiceMode.guidance}\nurl: ${item.url || 'n/a'}`;
+      const format = POST_FORMATS[index % POST_FORMATS.length];
+      return `${index + 1}. titulo: ${item.topic}\nfonte: ${item.source}\nresumo: ${item.summary}\ncategoria: ${item.category}\nsinal: ${item.signal}\nangulo sugerido: ${item.angleHint}\nmodo de voz: ${voiceMode.mode}\norientacao de voz: ${voiceMode.guidance}\nformato preferido: ${format}\nurl: ${item.url || 'n/a'}`;
     })
     .join('\n\n');
 
@@ -144,6 +178,7 @@ Itens de noticia e tendencia de hoje:
 ${formattedItems}
 
 Gere exatamente ${count} posts unicos sobre esses itens.
+- Use no maximo 1 post por item
 - Priorize AI acima dos outros temas
 - Crypto pode aparecer no maximo 1 vez no lote do dia
 - Se tiver que escolher, prefira AI e tech antes de crypto
@@ -151,6 +186,7 @@ Gere exatamente ${count} posts unicos sobre esses itens.
 - Cada post precisa nascer de um item especifico de noticia ou tendencia
 - Nao resuma a manchete. transforme o fato em leitura propria
 - Respeite o modo de voz sugerido em cada item
+- Respeite tambem o formato preferido de cada item para variar o estilo
 - Quando o item for AI de produto, launch, leak ou incidente, puxe mais para explicador-builder
 - Se a noticia pedir, puxe segunda ordem, comportamento de mercado ou tese
 - Frases curtas e naturais
