@@ -1,0 +1,10 @@
+.venv/
+__pycache__/
+runs/
+main.py
+manual_posts.py
+requirements.txt
+run_hourly.ps1
+run_manual.ps1
+setup_manual_task_2h.ps1
+setup_task.ps1
