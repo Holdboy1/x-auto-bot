@@ -7,6 +7,13 @@ type PendingPostRow = GeneratedPost & {
   scheduled_for: string;
 };
 
+type ScheduleBucket = {
+  name: 'morning' | 'afternoon' | 'night';
+  weight: number;
+  start: Date;
+  end: Date;
+};
+
 let dispatchInFlight = false;
 
 function toSqliteDate(date: Date): string {
@@ -19,6 +26,101 @@ function getScheduleStart(now: Date, requestedStartHour: number): Date {
 
   const minimumStart = new Date(now.getTime() + 5 * 60 * 1000);
   return requestedStart > minimumStart ? requestedStart : minimumStart;
+}
+
+function roundCountAllocation(total: number, weights: number[]): number[] {
+  const weightSum = weights.reduce((sum, weight) => sum + weight, 0);
+  const raw = weights.map((weight) => (total * weight) / weightSum);
+  const base = raw.map((value) => Math.floor(value));
+  let assigned = base.reduce((sum, value) => sum + value, 0);
+
+  const fractionalOrder = raw
+    .map((value, index) => ({ index, fraction: value - Math.floor(value) }))
+    .sort((a, b) => b.fraction - a.fraction);
+
+  for (const item of fractionalOrder) {
+    if (assigned >= total) {
+      break;
+    }
+
+    base[item.index] += 1;
+    assigned += 1;
+  }
+
+  return base;
+}
+
+function buildScheduleBuckets(now: Date, startHour: number, endHour: number): ScheduleBucket[] {
+  const minimumStart = getScheduleStart(now, startHour);
+  const morningEndHour = Math.min(12, endHour);
+  const afternoonEndHour = Math.min(18, endHour);
+
+  const rawBuckets: ScheduleBucket[] = [
+    {
+      name: 'morning',
+      weight: 2,
+      start: new Date(now),
+      end: new Date(now),
+    },
+    {
+      name: 'afternoon',
+      weight: 5,
+      start: new Date(now),
+      end: new Date(now),
+    },
+    {
+      name: 'night',
+      weight: 3,
+      start: new Date(now),
+      end: new Date(now),
+    },
+  ];
+
+  rawBuckets[0].start.setHours(startHour, 0, 0, 0);
+  rawBuckets[0].end.setHours(morningEndHour, 0, 0, 0);
+  rawBuckets[1].start.setHours(Math.max(startHour, 12), 0, 0, 0);
+  rawBuckets[1].end.setHours(afternoonEndHour, 0, 0, 0);
+  rawBuckets[2].start.setHours(Math.max(startHour, 18), 0, 0, 0);
+  rawBuckets[2].end.setHours(endHour, 0, 0, 0);
+
+  return rawBuckets
+    .map((bucket) => ({
+      ...bucket,
+      start: bucket.start < minimumStart ? new Date(minimumStart) : bucket.start,
+    }))
+    .filter((bucket) => bucket.end > bucket.start);
+}
+
+function getScheduledDates(totalPosts: number, now: Date, startHour: number, endHour: number): Date[] {
+  const buckets = buildScheduleBuckets(now, startHour, endHour);
+
+  if (!buckets.length) {
+    const fallbackStart = getScheduleStart(now, startHour);
+    return Array.from({ length: totalPosts }, (_, index) => new Date(fallbackStart.getTime() + index * 90 * 60 * 1000));
+  }
+
+  const allocations = roundCountAllocation(
+    totalPosts,
+    buckets.map((bucket) => bucket.weight),
+  );
+
+  const scheduledDates: Date[] = [];
+
+  buckets.forEach((bucket, bucketIndex) => {
+    const bucketPosts = allocations[bucketIndex] ?? 0;
+    if (bucketPosts <= 0) {
+      return;
+    }
+
+    const bucketDuration = bucket.end.getTime() - bucket.start.getTime();
+    const gapMs = bucketDuration / bucketPosts;
+
+    for (let index = 0; index < bucketPosts; index += 1) {
+      scheduledDates.push(new Date(bucket.start.getTime() + gapMs * index));
+    }
+  });
+
+  return scheduledDates.slice(0, totalPosts);
 }
 
 function getMinimumGapMinutes(): number {
@@ -69,16 +171,7 @@ export function enqueuePosts(posts: GeneratedPost[], startHour: number, endHour:
   }
 
   const day = now.toISOString().slice(0, 10);
-  const start = getScheduleStart(now, startHour);
-
-  const end = new Date(now);
-  end.setHours(endHour, 0, 0, 0);
-
-  if (end <= start) {
-    end.setTime(start.getTime() + posts.length * 90 * 60 * 1000);
-  }
-
-  const gapMinutes = ((end.getTime() - start.getTime()) / 60000) / posts.length;
+  const scheduledDates = getScheduledDates(posts.length, now, startHour, endHour);
   const insert = db.prepare(`
     INSERT INTO pending_posts (
       content, topic, scheduled_for, status, created_for_day,
@@ -88,7 +181,7 @@ export function enqueuePosts(posts: GeneratedPost[], startHour: number, endHour:
 
   const transaction = db.transaction(() => {
     posts.forEach((post, index) => {
-      const scheduledDate = new Date(start.getTime() + index * gapMinutes * 60 * 1000);
+      const scheduledDate = scheduledDates[index] || new Date(now.getTime() + (index + 1) * 90 * 60 * 1000);
       insert.run(
         post.text,
         post.topic,
@@ -104,7 +197,7 @@ export function enqueuePosts(posts: GeneratedPost[], startHour: number, endHour:
   });
 
   transaction();
-  console.log(`Queued ${posts.length} posts for ${day} starting at ${toSqliteDate(start)}`);
+  console.log(`Queued ${posts.length} posts for ${day} with buckets 2/5/3`);
 }
 
 export async function dispatchNextPost(): Promise<void> {
