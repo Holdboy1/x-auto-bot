@@ -7,7 +7,7 @@
     "node": "20.x"
   },
   "scripts": {
-    "start": "tsx src/index.ts",
+    "start": "node dist/index.js",
     "dev": "tsx watch src/index.ts",
     "build": "tsc -p tsconfig.json",
     "check": "tsc --noEmit -p tsconfig.json"
