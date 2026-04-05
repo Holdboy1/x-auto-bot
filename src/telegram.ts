@@ -24,6 +24,10 @@ async function send(text: string) {
   });
 }
 
+export async function sendTelegramAlert(text: string) {
+  await send(text);
+}
+
 function bar(value: number, max: number, len = 10): string {
   const filled = max > 0 ? Math.round((value / max) * len) : 0;
   return '█'.repeat(filled) + '░'.repeat(Math.max(0, len - filled));

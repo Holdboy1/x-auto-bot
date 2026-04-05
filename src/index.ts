@@ -1,15 +1,19 @@
 import 'dotenv/config';
 import cron from 'node-cron';
+import { engageBigAccounts } from './bigaccounts.js';
+import { checkUrgentEvents } from './urgency.js';
 import { initDb } from './db.js';
 import { collectEngagement } from './engagement.js';
+import { buildEvergreenStock, getEvergreenFallbackItems } from './evergreen.js';
+import { publishComparison } from './comparisons.js';
+import { publishWeeklyPoll } from './polls.js';
+import { processReplies } from './replies.js';
+import { isPostingPaused } from './runtime-flags.js';
 import { fetchTrends } from './trends.js';
 import { dispatchNextPost, enqueuePosts, hasPendingPostsForDay, pruneDuplicatePendingPosts } from './scheduler.js';
 import { sendDailyReport, startTelegramPolling } from './telegram.js';
+import { generateWeeklyRecap } from './threads.js';
 import { missingXEnvVars } from './x-client.js';
-
-function isPostingPaused(): boolean {
-  return ['1', 'true', 'yes', 'on'].includes((process.env.POSTING_PAUSED || '').toLowerCase());
-}
 
 function requiredEnvVars(): string[] {
   const required = [...missingXEnvVars(), 'GROQ_API_KEY'];
@@ -43,10 +47,16 @@ async function dailyPipeline() {
   }
 
   const postsPerDay = Number(process.env.POSTS_PER_DAY) || 10;
-  const items = await fetchTrends(Math.max(postsPerDay + 4, 12));
+  let items = await fetchTrends(Math.max(postsPerDay + 4, 12));
   if (!items.length) {
     console.error('No trend items available, aborting pipeline');
     return;
+  }
+
+  if (items.length < 5) {
+    console.log(`Only ${items.length} items available, adding evergreen fallback items`);
+    const evergreenItems = await getEvergreenFallbackItems(Math.min(3, postsPerDay - items.length));
+    items = [...items, ...evergreenItems];
   }
 
   const startHour = Number(process.env.POST_START_HOUR) || 8;
@@ -65,6 +75,38 @@ cron.schedule('0 */6 * * *', () => {
   void collectEngagement();
 });
 
+cron.schedule('0 */2 * * *', () => {
+  void processReplies();
+});
+
+cron.schedule('0 6 * * 1', () => {
+  void buildEvergreenStock();
+});
+
+cron.schedule('0 10 * * *', () => {
+  void engageBigAccounts();
+});
+
+cron.schedule('0 17 * * *', () => {
+  void engageBigAccounts();
+});
+
+cron.schedule('0 14 * * 2', () => {
+  void publishComparison();
+});
+
+cron.schedule('0 14 * * 4', () => {
+  void publishComparison();
+});
+
+cron.schedule('0 12 * * 6', () => {
+  void publishWeeklyPoll();
+});
+
+cron.schedule('*/30 * * * *', () => {
+  void checkUrgentEvents();
+});
+
 cron.schedule('* * * * *', () => {
   if (isPostingPaused()) {
     return;
@@ -80,6 +122,10 @@ cron.schedule('* * * * *', () => {
 
 cron.schedule('0 23 * * *', () => {
   void sendDailyReport();
+});
+
+cron.schedule('0 20 * * 0', () => {
+  void generateWeeklyRecap();
 });
 
 void startTelegramPolling();
