@@ -3,7 +3,6 @@ import { generatePosts } from './generator.js';
 import { publishPost } from './publisher.js';
 import { isPostingPaused } from './runtime-flags.js';
 import { sendTelegramAlert } from './telegram.js';
-import { generateThread } from './threads.js';
 
 export type UrgencyLevel = 'urgent' | 'relevant' | 'evergreen';
 
@@ -120,11 +119,6 @@ export async function checkUrgentEvents() {
       `🔥 Score: ${top.urgencyScore}/100\n\n` +
       `Gerando publicacao urgente...`,
   );
-
-  if (top.urgencyScore >= 90) {
-    await generateThread(top, 'urgent', Number(process.env.THREAD_SIZE) || 3);
-    return;
-  }
 
   const posts = await generatePosts([top], 1);
   if (posts.length) {

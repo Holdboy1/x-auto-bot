@@ -12,7 +12,6 @@ import { isPostingPaused } from './runtime-flags.js';
 import { fetchTrends } from './trends.js';
 import { dispatchNextPost, enqueuePosts, hasPendingPostsForDay, pruneDuplicatePendingPosts } from './scheduler.js';
 import { sendDailyReport, startTelegramPolling } from './telegram.js';
-import { generateWeeklyRecap } from './threads.js';
 import { missingXEnvVars } from './x-client.js';
 
 function requiredEnvVars(): string[] {
@@ -122,10 +121,6 @@ cron.schedule('* * * * *', () => {
 
 cron.schedule('0 23 * * *', () => {
   void sendDailyReport();
-});
-
-cron.schedule('0 20 * * 0', () => {
-  void generateWeeklyRecap();
 });
 
 void startTelegramPolling();
