@@ -1,9 +1,11 @@
 import { buildTopicFingerprint } from './content-rules.js';
 import { db } from './db.js';
-import type { GeneratedPost } from './generator.js';
+import { generatePosts, type GeneratedPost } from './generator.js';
 import { publishPost } from './publisher.js';
+import type { TrendItem } from './trends.js';
 
-type PendingPostRow = GeneratedPost & {
+type PendingPostRow = GeneratedPost &
+  Pick<TrendItem, 'category' | 'summary' | 'signal' | 'source'> & {
   id: number;
   scheduled_for: string;
 };
@@ -218,8 +220,8 @@ export function hasPendingPostsForDay(day: string): boolean {
   return row.total > 0;
 }
 
-export function enqueuePosts(posts: GeneratedPost[], startHour: number, endHour: number, now = new Date()): void {
-  if (!posts.length) {
+export function enqueuePosts(items: TrendItem[], startHour: number, endHour: number, now = new Date()): void {
+  if (!items.length) {
     return;
   }
 
@@ -237,8 +239,8 @@ export function enqueuePosts(posts: GeneratedPost[], startHour: number, endHour:
       .map((row) => buildTopicFingerprint(row.topic, row.source_title, row.source_url))
       .filter(Boolean),
   );
-  const uniquePosts = posts.filter((post) => {
-    const subjectKey = buildTopicFingerprint(post.topic, post.sourceTitle, post.sourceUrl);
+  const uniqueItems = items.filter((item) => {
+    const subjectKey = buildTopicFingerprint(item.topic, item.topic, item.url);
     if (!subjectKey || existingSubjects.has(subjectKey)) {
       return false;
     }
@@ -247,38 +249,41 @@ export function enqueuePosts(posts: GeneratedPost[], startHour: number, endHour:
     return true;
   });
 
-  if (!uniquePosts.length) {
+  if (!uniqueItems.length) {
     console.log(`Skipped enqueue for ${day}; all posts were duplicates of queued/published subjects`);
     return;
   }
 
-  const scheduledDates = getScheduledDates(uniquePosts.length, now, startHour, endHour);
+  const scheduledDates = getScheduledDates(uniqueItems.length, now, startHour, endHour);
   const insert = db.prepare(`
     INSERT INTO pending_posts (
-      content, topic, scheduled_for, status, created_for_day,
+      content, topic, category, source_summary, signal, scheduled_for, status, created_for_day,
       source_name, source_title, source_url, angle_hint, image_url
-    ) VALUES (?, ?, ?, 'queued', ?, ?, ?, ?, ?, ?)
+    ) VALUES (?, ?, ?, ?, ?, ?, 'queued', ?, ?, ?, ?, ?, ?)
   `);
 
   const transaction = db.transaction(() => {
-    uniquePosts.forEach((post, index) => {
+    uniqueItems.forEach((item, index) => {
       const scheduledDate = scheduledDates[index] || new Date(now.getTime() + (index + 1) * 90 * 60 * 1000);
       insert.run(
-        post.text,
-        post.topic,
+        '',
+        item.topic,
+        item.category,
+        item.summary,
+        item.signal,
         toSqliteDate(scheduledDate),
         day,
-        post.sourceName || null,
-        post.sourceTitle || null,
-        post.sourceUrl || null,
-        post.angleHint || null,
-        post.imageUrl || null,
+        item.source || null,
+        item.topic || null,
+        item.url || null,
+        item.angleHint || null,
+        item.imageUrl || null,
       );
     });
   });
 
   transaction();
-  console.log(`Queued ${uniquePosts.length} posts for ${day} with buckets 2/5/3`);
+  console.log(`Queued ${uniqueItems.length} scheduled slots for ${day} with buckets 2/5/3`);
 }
 
 export async function dispatchNextPost(): Promise<void> {
@@ -295,7 +300,8 @@ export async function dispatchNextPost(): Promise<void> {
 
     const next = db
       .prepare(`
-        SELECT id, content as text, topic, source_name as sourceName,
+        SELECT id, content as text, topic, category, source_summary as summary, signal, source_name as source,
+               source_name as sourceName,
                source_title as sourceTitle, source_url as sourceUrl,
                angle_hint as angleHint, image_url as imageUrl, scheduled_for
         FROM pending_posts
@@ -312,7 +318,64 @@ export async function dispatchNextPost(): Promise<void> {
 
     db.prepare(`UPDATE pending_posts SET status='publishing' WHERE id=?`).run(next.id);
 
-    const tweetId = await publishPost(next);
+    let postToPublish: GeneratedPost = next;
+
+    if (!next.text?.trim()) {
+      const generated = await generatePosts(
+        [
+          {
+            topic: next.topic || next.sourceTitle || 'general',
+            source: next.source || next.sourceName || 'Unknown',
+            score: 1,
+            url: next.sourceUrl,
+            imageUrl: next.imageUrl,
+            summary: next.summary || 'Slot oficial gerado sob demanda para publicacao.',
+            category: next.category || 'general',
+            signal: next.signal || 'news',
+            angleHint: next.angleHint || 'nao repita a manchete. escreva como se voce tivesse uma leitura propria do fato',
+          },
+        ],
+        1,
+      );
+
+      const generatedPost = generated[0];
+      if (!generatedPost?.text) {
+        db.prepare(`
+          UPDATE pending_posts
+          SET status='failed', failed_at=datetime('now'), failure_reason=?
+          WHERE id=?
+        `).run('generation failed before publish', next.id);
+        return;
+      }
+
+      postToPublish = {
+        ...generatedPost,
+        topic: generatedPost.topic || next.topic,
+        category: generatedPost.category || next.category,
+        sourceName: generatedPost.sourceName || next.sourceName,
+        sourceTitle: generatedPost.sourceTitle || next.sourceTitle,
+        sourceUrl: generatedPost.sourceUrl || next.sourceUrl,
+        angleHint: generatedPost.angleHint || next.angleHint,
+        imageUrl: generatedPost.imageUrl || next.imageUrl,
+      };
+
+      db.prepare(`
+        UPDATE pending_posts
+        SET content=?, topic=?, source_name=?, source_title=?, source_url=?, angle_hint=?, image_url=?
+        WHERE id=?
+      `).run(
+        postToPublish.text,
+        postToPublish.topic,
+        postToPublish.sourceName || null,
+        postToPublish.sourceTitle || null,
+        postToPublish.sourceUrl || null,
+        postToPublish.angleHint || null,
+        postToPublish.imageUrl || null,
+        next.id,
+      );
+    }
+
+    const tweetId = await publishPost(postToPublish);
 
     if (tweetId) {
       db.prepare(`

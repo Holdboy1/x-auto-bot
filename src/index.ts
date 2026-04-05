@@ -2,7 +2,6 @@ import 'dotenv/config';
 import cron from 'node-cron';
 import { initDb } from './db.js';
 import { collectEngagement } from './engagement.js';
-import { generatePosts } from './generator.js';
 import { fetchTrends } from './trends.js';
 import { dispatchNextPost, enqueuePosts, hasPendingPostsForDay, pruneDuplicatePendingPosts } from './scheduler.js';
 import { sendDailyReport, startTelegramPolling } from './telegram.js';
@@ -45,17 +44,15 @@ async function dailyPipeline() {
 
   const postsPerDay = Number(process.env.POSTS_PER_DAY) || 10;
   const items = await fetchTrends(Math.max(postsPerDay + 4, 12));
-  const posts = await generatePosts(items, postsPerDay);
-
-  if (!posts.length) {
-    console.error('No posts generated, aborting pipeline');
+  if (!items.length) {
+    console.error('No trend items available, aborting pipeline');
     return;
   }
 
   const startHour = Number(process.env.POST_START_HOUR) || 8;
   const endHour = Number(process.env.POST_END_HOUR) || 22;
-  enqueuePosts(posts, startHour, endHour);
-  console.log(`Queued ${posts.length} posts between ${startHour}:00 and ${endHour}:00`);
+  enqueuePosts(items.slice(0, postsPerDay), startHour, endHour);
+  console.log(`Queued up to ${Math.min(items.length, postsPerDay)} official post slots between ${startHour}:00 and ${endHour}:00`);
 }
 
 initDb();

@@ -66,6 +66,9 @@ export function initDb() {
       id            INTEGER PRIMARY KEY AUTOINCREMENT,
       content       TEXT NOT NULL,
       topic         TEXT,
+      category      TEXT,
+      source_summary TEXT,
+      signal        TEXT,
       scheduled_for TEXT NOT NULL,
       status        TEXT NOT NULL DEFAULT 'queued',
       created_for_day TEXT,
@@ -106,6 +109,9 @@ export function initDb() {
   addPendingColumnIfMissing('source_name', 'TEXT');
   addPendingColumnIfMissing('source_title', 'TEXT');
   addPendingColumnIfMissing('source_url', 'TEXT');
+  addPendingColumnIfMissing('category', 'TEXT');
+  addPendingColumnIfMissing('source_summary', 'TEXT');
+  addPendingColumnIfMissing('signal', 'TEXT');
   addPendingColumnIfMissing('angle_hint', 'TEXT');
   addPendingColumnIfMissing('image_url', 'TEXT');
 
