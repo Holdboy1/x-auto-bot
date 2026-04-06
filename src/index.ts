@@ -1,13 +1,8 @@
 import 'dotenv/config';
 import cron from 'node-cron';
-import { engageBigAccounts } from './bigaccounts.js';
-import { checkUrgentEvents } from './urgency.js';
 import { initDb } from './db.js';
 import { collectEngagement } from './engagement.js';
-import { buildEvergreenStock, getEvergreenFallbackItems } from './evergreen.js';
-import { publishComparison } from './comparisons.js';
-import { publishWeeklyPoll } from './polls.js';
-import { processReplies } from './replies.js';
+import { getEvergreenFallbackItems } from './evergreen.js';
 import { isPostingPaused } from './runtime-flags.js';
 import { fetchTrends } from './trends.js';
 import { dispatchNextPost, enqueuePosts, hasPendingPostsForDay, pruneDuplicatePendingPosts } from './scheduler.js';
@@ -72,38 +67,6 @@ cron.schedule('0 7 * * *', () => {
 
 cron.schedule('0 */6 * * *', () => {
   void collectEngagement();
-});
-
-cron.schedule('0 */2 * * *', () => {
-  void processReplies();
-});
-
-cron.schedule('0 6 * * 1', () => {
-  void buildEvergreenStock();
-});
-
-cron.schedule('0 10 * * *', () => {
-  void engageBigAccounts();
-});
-
-cron.schedule('0 17 * * *', () => {
-  void engageBigAccounts();
-});
-
-cron.schedule('0 14 * * 2', () => {
-  void publishComparison();
-});
-
-cron.schedule('0 14 * * 4', () => {
-  void publishComparison();
-});
-
-cron.schedule('0 12 * * 6', () => {
-  void publishWeeklyPoll();
-});
-
-cron.schedule('*/30 * * * *', () => {
-  void checkUrgentEvents();
 });
 
 cron.schedule('* * * * *', () => {
